@@ -13,11 +13,13 @@ namespace BTCPayServer.Lightning.LNbits
         private readonly HttpClient _httpClient;
         private readonly Uri _baseUri;
         private readonly string _apiKey;
+        private readonly string _walletId;
 
-        public LNbitsLightningClient(Uri baseUri, string apiKey, HttpClient httpClient = null)
+        public LNbitsLightningClient(Uri baseUri, string apiKey, string walletId = null, HttpClient httpClient = null)
         {
             _baseUri = baseUri ?? throw new ArgumentNullException(nameof(baseUri));
             _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
+            _walletId = walletId;
             _httpClient = httpClient ?? new HttpClient();
 
             _httpClient.BaseAddress = _baseUri;
@@ -97,22 +99,38 @@ namespace BTCPayServer.Lightning.LNbits
         public Task<LightningPayment> GetPayment(string paymentHash, CancellationToken cancellation = default)
             => Task.FromResult<LightningPayment>(null);
 
-        // REQUIRED: Simple overload
         public Task<LightningInvoice[]> ListInvoices(CancellationToken cancellation = default)
             => ListInvoices(new ListInvoicesParams(), cancellation);
 
         public Task<LightningInvoice[]> ListInvoices(ListInvoicesParams _, CancellationToken cancellation = default)
             => Task.FromResult(Array.Empty<LightningInvoice>());
 
-        // REQUIRED: Simple overload
         public Task<LightningPayment[]> ListPayments(CancellationToken cancellation = default)
             => ListPayments(new ListPaymentsParams(), cancellation);
 
         public Task<LightningPayment[]> ListPayments(ListPaymentsParams _, CancellationToken cancellation = default)
             => Task.FromResult(Array.Empty<LightningPayment>());
 
-        public Task<LightningNodeInformation> GetInfo(CancellationToken cancellation = default)
-            => Task.FromResult(new LightningNodeInformation());
+        public async Task<LightningNodeInformation> GetInfo(CancellationToken cancellation = default)
+        {
+            try
+            {
+                var resp = await _httpClient.GetAsync("/api/v1/wallet", cancellation);
+                resp.EnsureSuccessStatusCode();
+                
+                return new LightningNodeInformation
+                {
+                    BlockHeight = int.MaxValue,
+                };
+            }
+            catch
+            {
+                return new LightningNodeInformation
+                {
+                    BlockHeight = 0,
+                };
+            }
+        }
 
         public Task CancelInvoice(string invoiceId, CancellationToken cancellation = default)
             => Task.CompletedTask;

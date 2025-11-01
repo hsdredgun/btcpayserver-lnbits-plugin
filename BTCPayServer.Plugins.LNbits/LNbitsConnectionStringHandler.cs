@@ -39,13 +39,18 @@ namespace BTCPayServer.Lightning.LNbits
                     return null;
                 }
 
+                // wallet-id is optional - if not provided, LNbits uses the default wallet
+                string walletId = null;
+                parts.TryGetValue("wallet-id", out walletId);
+
                 if (!Uri.TryCreate(server, UriKind.Absolute, out var serverUri) || serverUri == null)
                 {
                     error = $"Invalid server URL: {server}";
                     return null;
                 }
 
-                return new LNbitsLightningClient(serverUri, apiKey);
+                // Pass walletId to the client (it can be null)
+                return new LNbitsLightningClient(serverUri, apiKey, walletId);
             }
             catch (Exception ex)
             {
