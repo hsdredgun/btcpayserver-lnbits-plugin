@@ -1,0 +1,11 @@
+# Build results
+bin/
+obj/
+*.dll
+*.pdb
+*.deps.json
+
+# User-specific files
+*.user
+*.userosscache
+*.sln.docstates
