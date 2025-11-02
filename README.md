@@ -68,3 +68,12 @@ MIT License
 
 ---
 *** Made with Love ***
+
+## Known Issues / Future Improvements
+
+- [ ] Payment celebration effects (sparkles/confetti) not triggering on successful payment
+- [ ] Webhook integration needs improvement for real-time payment updates
+- [ ] Multiple wallet support could be added
+
+**Help Wanted:** BTCPay Server team and community contributions welcome! Feel free to fork and submit PRs.
+
