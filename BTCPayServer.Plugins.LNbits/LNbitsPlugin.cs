@@ -26,16 +26,12 @@ namespace BTCPayServer.Plugins.LNbits
             
             // Register the Lightning connection string handler
             services.AddSingleton<ILightningConnectionStringHandler, LNbitsConnectionStringHandler>();
-            
-            // Register controllers
-            services.AddControllers()
-                .AddApplicationPart(typeof(LNbitsPlugin).Assembly)
-                .AddControllersAsServices();
         }
 
         public void Execute(IApplicationBuilder applicationBuilder, IServiceProvider serviceProvider)
         {
-            // Ensure endpoints are mapped
+            // This method is called after services are configured
+            // We don't need any additional setup here for now
         }
     }
 }

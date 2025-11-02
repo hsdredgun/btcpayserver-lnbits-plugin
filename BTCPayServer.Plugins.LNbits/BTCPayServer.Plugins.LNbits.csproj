@@ -3,7 +3,7 @@
         <TargetFramework>net8.0</TargetFramework>
         <Product>LNbits Lightning Support</Product>
         <Description>LNbits Lightning client for BTCPay Server</Description>
-        <Version>1.0.0</Version>
+        <Version>1.1.0</Version>
         <AssemblyName>BTCPayServer.Plugins.LNbits</AssemblyName>
     </PropertyGroup>
     
