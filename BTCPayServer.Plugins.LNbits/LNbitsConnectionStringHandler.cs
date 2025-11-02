@@ -2,11 +2,19 @@ using System;
 using System.Collections.Generic;
 using BTCPayServer.Lightning;
 using NBitcoin;
+using Microsoft.AspNetCore.Http;
 
 namespace BTCPayServer.Lightning.LNbits
 {
     public class LNbitsConnectionStringHandler : ILightningConnectionStringHandler
     {
+        private readonly IHttpContextAccessor _httpContextAccessor;
+
+        public LNbitsConnectionStringHandler(IHttpContextAccessor httpContextAccessor = null)
+        {
+            _httpContextAccessor = httpContextAccessor;
+        }
+
         public ILightningClient Create(string connectionString, Network network, out string error)
         {
             error = null;
@@ -39,7 +47,7 @@ namespace BTCPayServer.Lightning.LNbits
                     return null;
                 }
 
-                // wallet-id is optional - if not provided, LNbits uses the default wallet
+                // wallet-id is optional
                 string walletId = null;
                 parts.TryGetValue("wallet-id", out walletId);
 
@@ -49,8 +57,15 @@ namespace BTCPayServer.Lightning.LNbits
                     return null;
                 }
 
-                // Pass walletId to the client (it can be null)
-                return new LNbitsLightningClient(serverUri, apiKey, walletId);
+                // Get BTCPay server URL from HTTP context
+                string btcpayServerUrl = null;
+                if (_httpContextAccessor?.HttpContext != null)
+                {
+                    var request = _httpContextAccessor.HttpContext.Request;
+                    btcpayServerUrl = $"{request.Scheme}://{request.Host}";
+                }
+
+                return new LNbitsLightningClient(serverUri, apiKey, walletId, null, btcpayServerUrl);
             }
             catch (Exception ex)
             {

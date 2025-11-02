@@ -12,8 +12,8 @@ namespace BTCPayServer.Plugins.LNbits
     {
         public string Identifier => "BTCPayServer.Plugins.LNbits";
         public string Name => "LNbits Lightning";
-        public string Description => "Connect BTCPay Server to LNbits";
-        public Version Version => new Version(1, 0, 0);
+        public string Description => "Connect BTCPay Server to LNbits with webhook support";
+        public Version Version => new Version(1, 1, 0);
         
         public bool SystemPlugin { get; set; } = false;
         
@@ -21,13 +21,21 @@ namespace BTCPayServer.Plugins.LNbits
 
         public void Execute(IServiceCollection services)
         {
+            // Register HTTP context accessor for getting BTCPay URL
+            services.AddHttpContextAccessor();
+            
+            // Register the Lightning connection string handler
             services.AddSingleton<ILightningConnectionStringHandler, LNbitsConnectionStringHandler>();
+            
+            // Register controllers
+            services.AddControllers()
+                .AddApplicationPart(typeof(LNbitsPlugin).Assembly)
+                .AddControllersAsServices();
         }
 
         public void Execute(IApplicationBuilder applicationBuilder, IServiceProvider serviceProvider)
         {
-            // This method is called after services are configured
-            // We don't need any additional setup here for now
+            // Ensure endpoints are mapped
         }
     }
 }

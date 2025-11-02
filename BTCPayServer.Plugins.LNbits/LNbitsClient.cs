@@ -14,12 +14,14 @@ namespace BTCPayServer.Lightning.LNbits
         private readonly Uri _baseUri;
         private readonly string _apiKey;
         private readonly string _walletId;
-
-        public LNbitsLightningClient(Uri baseUri, string apiKey, string walletId = null, HttpClient httpClient = null)
+        private readonly string _btcpayServerUrl;
+        
+        public LNbitsLightningClient(Uri baseUri, string apiKey, string walletId = null, HttpClient httpClient = null, string btcpayServerUrl = null)
         {
             _baseUri = baseUri ?? throw new ArgumentNullException(nameof(baseUri));
             _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
             _walletId = walletId;
+            _btcpayServerUrl = btcpayServerUrl;
             _httpClient = httpClient ?? new HttpClient();
 
             _httpClient.BaseAddress = _baseUri;
@@ -46,6 +48,9 @@ namespace BTCPayServer.Lightning.LNbits
             resp.EnsureSuccessStatusCode();
 
             var result = await resp.Content.ReadFromJsonAsync<LNbitsInvoiceResponse>(cancellationToken: cancellation);
+
+            // Register webhook with LNbits
+            await RegisterWebhookAsync(result.payment_hash, cancellation);
 
             return new LightningInvoice
             {
@@ -198,6 +203,36 @@ namespace BTCPayServer.Lightning.LNbits
             => Task.FromResult<ILightningInvoiceListener>(null);
 
         public void Dispose() => _httpClient?.Dispose();
+
+        // Webhook registration method
+        private async Task RegisterWebhookAsync(string paymentHash, CancellationToken cancellation = default)
+        {
+            if (string.IsNullOrEmpty(_btcpayServerUrl))
+            {
+                // No BTCPay URL configured, skip webhook registration
+                return;
+            }
+
+            try
+            {
+                var webhookUrl = $"{_btcpayServerUrl.TrimEnd('/')}/plugins/lnbits/webhook/{paymentHash}";
+                
+                var payload = new { webhook = webhookUrl };
+                
+                var response = await System.Net.Http.Json.HttpClientJsonExtensions.PutAsJsonAsync(_httpClient, $"/api/v1/payments/{paymentHash}", payload, cancellation);
+                
+                // LNbits returns 201 or 200 on success
+                if (response.IsSuccessStatusCode)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Webhook registered: {webhookUrl}");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Don't fail invoice creation if webhook registration fails
+                System.Diagnostics.Debug.WriteLine($"Failed to register webhook: {ex.Message}");
+            }
+        }
     }
 
     internal class LNbitsInvoiceResponse
