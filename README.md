@@ -67,7 +67,6 @@ MIT License
 - LNbits: https://lnbits.com
 
 ---
-*** Made with Love ***
 
 ## Known Issues / Future Improvements
 
