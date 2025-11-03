@@ -1,82 +1,133 @@
 using System;
+using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
-using BTCPayServer.Data;
-using BTCPayServer.Events;
-using BTCPayServer.Services.Invoices;
-using BTCPayServer.Client.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using NBitcoin;
-using Newtonsoft.Json;
+using BTCPayServer.Data;
+using BTCPayServer.Services.Invoices;
+using BTCPayServer.Events;
 
 namespace BTCPayServer.Plugins.LNbits.Controllers
 {
     [ApiController]
     [Route("plugins/lnbits")]
-    [AllowAnonymous] // Webhooks come from external LNbits instances
+    [AllowAnonymous]
     public class LNbitsWebhookController : ControllerBase
     {
-        private readonly InvoiceRepository _invoiceRepository;
-        private readonly EventAggregator _eventAggregator;
         private readonly ILogger<LNbitsWebhookController> _logger;
+        private readonly ApplicationDbContextFactory _dbFactory;
+        private readonly InvoiceRepository _invoiceRepo;
+        private readonly EventAggregator _eventAggregator;
 
         public LNbitsWebhookController(
-            InvoiceRepository invoiceRepository,
-            EventAggregator eventAggregator,
-            ILogger<LNbitsWebhookController> logger)
+            ILogger<LNbitsWebhookController> logger,
+            ApplicationDbContextFactory dbFactory,
+            InvoiceRepository invoiceRepo,
+            EventAggregator eventAggregator)
         {
-            _invoiceRepository = invoiceRepository;
-            _eventAggregator = eventAggregator;
             _logger = logger;
+            _dbFactory = dbFactory;
+            _invoiceRepo = invoiceRepo;
+            _eventAggregator = eventAggregator;
+        }
+
+        private class Payload
+        {
+            public string payment_hash { get; set; }
+            public bool paid { get; set; }
         }
 
         [HttpPost("webhook/{paymentHash}")]
-        public async Task<IActionResult> ReceiveWebhook(string paymentHash)
+        public async Task<IActionResult> Receive(string paymentHash)
         {
             try
             {
+                using var reader = new StreamReader(Request.Body);
+                var body = await reader.ReadToEndAsync();
+
                 _logger.LogInformation("LNbits webhook received for payment hash: {PaymentHash}", paymentHash);
 
-                // Try to find the invoice by searching through all invoices
-                var allInvoices = await _invoiceRepository.GetInvoices(new InvoiceQuery());
-                
-                InvoiceEntity invoice = null;
-                foreach (var inv in allInvoices)
+                var payload = JsonSerializer.Deserialize<Payload>(body, new JsonSerializerOptions 
+                { 
+                    PropertyNameCaseInsensitive = true 
+                });
+
+                if (payload == null || !payload.paid)
                 {
-                    // Serialize the invoice to JSON and search for payment hash
-                    var invoiceJson = JsonConvert.SerializeObject(inv);
-                    if (invoiceJson.Contains(paymentHash, StringComparison.OrdinalIgnoreCase))
+                    _logger.LogWarning("Invalid webhook payload");
+                    return BadRequest("Invalid payload");
+                }
+
+                await using var ctx = _dbFactory.CreateContext();
+                
+                // Get all payments with Blob2 data
+                // Blob2 is a STRING, not a byte array!
+                var allPayments = await ctx.Payments
+                    .Include(p => p.InvoiceData)
+                    .Where(p => !string.IsNullOrEmpty(p.Blob2))
+                    .ToListAsync();
+
+                PaymentData foundPayment = null;
+                
+                // Search through payments to find one containing our payment hash
+                foreach (var pmt in allPayments)
+                {
+                    if (string.IsNullOrEmpty(pmt.Blob2)) continue;
+                    
+                    try
                     {
-                        invoice = inv;
-                        break;
+                        // Blob2 is already a string! No conversion needed!
+                        string blobText = pmt.Blob2;
+                        
+                        // Simple case-insensitive search
+                        if (blobText.IndexOf(paymentHash, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            foundPayment = pmt;
+                            _logger.LogInformation("Found matching payment");
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        continue;
                     }
                 }
-                
-                if (invoice == null)
+
+                if (foundPayment == null || foundPayment.InvoiceData == null)
                 {
-                    _logger.LogWarning("Invoice not found for payment hash: {PaymentHash}", paymentHash);
+                    _logger.LogWarning("Payment not found for hash: {PaymentHash}", paymentHash);
+                    return NotFound("Payment not found");
+                }
+
+                // Get the invoice ID
+                string invoiceId = foundPayment.InvoiceData.Id;
+                
+                // Get the full invoice entity
+                var invoiceEntity = await _invoiceRepo.GetInvoice(invoiceId);
+                if (invoiceEntity == null)
+                {
+                    _logger.LogWarning("Invoice not found");
                     return NotFound("Invoice not found");
                 }
 
-                // Check if already paid
-                var state = invoice.GetInvoiceState();
-                if (state.Status == InvoiceStatus.Settled || state.Status == InvoiceStatus.Processing)
-                {
-                    _logger.LogInformation("Invoice {InvoiceId} already settled", invoice.Id);
-                    return Ok("Already paid");
-                }
+                _logger.LogInformation("Found invoice {InvoiceId}", invoiceEntity.Id);
 
-                // Trigger invoice payment event (this triggers the confetti!)
-                _logger.LogInformation("Triggering payment event for invoice {InvoiceId}", invoice.Id);
-                _eventAggregator.Publish(new InvoiceEvent(invoice, InvoiceEvent.ReceivedPayment));
-
-                return Ok("Webhook processed");
+                // Trigger the payment received event
+                // This will update the invoice status and show confetti! 🎉
+                _eventAggregator.Publish(new InvoiceEvent(invoiceEntity, InvoiceEvent.ReceivedPayment));
+                
+                _logger.LogInformation("LNbits webhook: Invoice payment confirmed!");
+                
+                return Ok(new { success = true, invoiceId = invoiceEntity.Id });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing LNbits webhook for payment hash: {PaymentHash}", paymentHash);
+                _logger.LogError(ex, "Error processing LNbits webhook");
                 return StatusCode(500, "Internal server error");
             }
         }

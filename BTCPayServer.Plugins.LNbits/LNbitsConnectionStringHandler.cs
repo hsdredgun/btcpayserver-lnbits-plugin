@@ -1,94 +1,63 @@
 using System;
-using System.Collections.Generic;
-using BTCPayServer.Lightning;
-using NBitcoin;
 using Microsoft.AspNetCore.Http;
+using NBitcoin;
+using BTCPayServer.Lightning;
+using BTCPayServer.Lightning.LNbits;  // ADD THIS LINE - fixes the LNbitsLightningClient error
 
-namespace BTCPayServer.Lightning.LNbits
+namespace BTCPayServer.Plugins.LNbits
 {
     public class LNbitsConnectionStringHandler : ILightningConnectionStringHandler
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public LNbitsConnectionStringHandler(IHttpContextAccessor httpContextAccessor = null)
+        public LNbitsConnectionStringHandler(IHttpContextAccessor httpContextAccessor)
         {
             _httpContextAccessor = httpContextAccessor;
         }
 
         public ILightningClient Create(string connectionString, Network network, out string error)
         {
+            if (!TryParseConnectionString(connectionString, out var baseUri, out var apiKey))
+            {
+                error = "Invalid format. Use: type=lnbits;server=https://your-lnbits.com;api-key=your-key";
+                return null;
+            }
+
+            var request = _httpContextAccessor.HttpContext?.Request;
+            var baseUrl = request != null ? $"{request.Scheme}://{request.Host}" : null;
+
             error = null;
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                error = "Connection string cannot be empty";
-                return null;
-            }
-
-            try
-            {
-                var parts = ParseConnectionString(connectionString);
-
-                if (!parts.TryGetValue("type", out var type) || type != "lnbits")
-                {
-                    error = "Connection type must be 'lnbits'";
-                    return null;
-                }
-
-                if (!parts.TryGetValue("server", out var server))
-                {
-                    error = "Missing required parameter: 'server'";
-                    return null;
-                }
-
-                if (!parts.TryGetValue("api-key", out var apiKey))
-                {
-                    error = "Missing required parameter: 'api-key'";
-                    return null;
-                }
-
-                // wallet-id is optional
-                string walletId = null;
-                parts.TryGetValue("wallet-id", out walletId);
-
-                if (!Uri.TryCreate(server, UriKind.Absolute, out var serverUri) || serverUri == null)
-                {
-                    error = $"Invalid server URL: {server}";
-                    return null;
-                }
-
-                // Get BTCPay server URL from HTTP context
-                string btcpayServerUrl = null;
-                if (_httpContextAccessor?.HttpContext != null)
-                {
-                    var request = _httpContextAccessor.HttpContext.Request;
-                    btcpayServerUrl = $"{request.Scheme}://{request.Host}";
-                }
-
-                return new LNbitsLightningClient(serverUri, apiKey, walletId, null, btcpayServerUrl);
-            }
-            catch (Exception ex)
-            {
-                error = $"Failed to parse LNbits connection string: {ex.Message}";
-                return null;
-            }
+            return new LNbitsLightningClient(baseUri, apiKey, null, null, baseUrl);
         }
 
-        private Dictionary<string, string> ParseConnectionString(string connectionString)
+        private bool TryParseConnectionString(string connectionString, out Uri baseUri, out string apiKey)
         {
-            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var parts = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries);
+            baseUri = null;
+            apiKey = null;
 
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return false;
+
+            var parts = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries);
+            bool hasType = false;
+            
             foreach (var part in parts)
             {
-                var keyValue = part.Split('=', 2);
-                if (keyValue.Length == 2)
-                {
-                    result[keyValue[0].Trim()] = keyValue[1].Trim();
-                }
+                var kv = part.Split('=', 2);
+                if (kv.Length != 2) continue;
+
+                var key = kv[0].Trim().ToLowerInvariant();
+                var value = kv[1].Trim();
+
+                if (key == "type" && value.ToLowerInvariant() == "lnbits")
+                    hasType = true;
+                else if (key == "server" && Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                    baseUri = uri;
+                else if (key == "api-key")
+                    apiKey = value;
             }
 
-            return result;
+            return hasType && baseUri != null && !string.IsNullOrEmpty(apiKey);
         }
     }
 }

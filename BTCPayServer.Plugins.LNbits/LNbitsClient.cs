@@ -1,10 +1,11 @@
 using System;
 using System.Net.Http;
-using System.Net.Http.Json;
+using System.Net.Http.Json;  // ADD THIS
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
 using BTCPayServer.Lightning;
+using BTCPayServer.Abstractions.Extensions;
 
 namespace BTCPayServer.Lightning.LNbits
 {
@@ -13,14 +14,12 @@ namespace BTCPayServer.Lightning.LNbits
         private readonly HttpClient _httpClient;
         private readonly Uri _baseUri;
         private readonly string _apiKey;
-        private readonly string _walletId;
         private readonly string _btcpayServerUrl;
-        
+
         public LNbitsLightningClient(Uri baseUri, string apiKey, string walletId = null, HttpClient httpClient = null, string btcpayServerUrl = null)
         {
             _baseUri = baseUri ?? throw new ArgumentNullException(nameof(baseUri));
             _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
-            _walletId = walletId;
             _btcpayServerUrl = btcpayServerUrl;
             _httpClient = httpClient ?? new HttpClient();
 
@@ -49,7 +48,6 @@ namespace BTCPayServer.Lightning.LNbits
 
             var result = await resp.Content.ReadFromJsonAsync<LNbitsInvoiceResponse>(cancellationToken: cancellation);
 
-            // Register webhook with LNbits
             await RegisterWebhookAsync(result.payment_hash, cancellation);
 
             return new LightningInvoice
@@ -75,7 +73,6 @@ namespace BTCPayServer.Lightning.LNbits
             var result = await resp.Content.ReadFromJsonAsync<LNbitsPaymentResponse>(cancellationToken: cancellation);
 
             var status = result.paid ? LightningInvoiceStatus.Paid : LightningInvoiceStatus.Unpaid;
-            var amount = LightMoney.Satoshis(result.amount);
 
             return new LightningInvoice
             {
@@ -83,20 +80,20 @@ namespace BTCPayServer.Lightning.LNbits
                 PaymentHash = result.payment_hash,
                 BOLT11 = result.bolt11,
                 Status = status,
-                Amount = amount,
-                PaidAt = result.paid && result.time > 0 ? DateTimeOffset.FromUnixTimeSeconds(result.time) : null
+                Amount = LightMoney.Satoshis(result.amount),
+                PaidAt = result.paid && result.time > 0 ? DateTimeOffset.FromUnixTimeSeconds(result.time) : (DateTimeOffset?)null
             };
         }
 
-        public Task<PayResponse> Pay(string bolt11, PayInvoiceParams payParams = null, CancellationToken cancellation = default)
-            => Pay(bolt11, cancellation);
-
-        public async Task<PayResponse> Pay(string bolt11, CancellationToken cancellation = default)
+        public async Task<PayResponse> Pay(string bolt11, PayInvoiceParams payParams, CancellationToken cancellation = default)
         {
             var payload = new { bolt11 };
             var resp = await System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync(_httpClient, "/api/v1/payments", payload, cancellation);
             return resp.IsSuccessStatusCode ? new PayResponse(PayResult.Ok) : new PayResponse(PayResult.Unknown);
         }
+
+        public Task<PayResponse> Pay(string bolt11, CancellationToken cancellation = default)
+            => Pay(bolt11, null, cancellation);
 
         public Task<PayResponse> Pay(PayInvoiceParams payParams, CancellationToken cancellation = default)
             => Task.FromResult(new PayResponse(PayResult.Unknown));
@@ -105,133 +102,45 @@ namespace BTCPayServer.Lightning.LNbits
             => Task.FromResult<LightningPayment>(null);
 
         public Task<LightningInvoice[]> ListInvoices(CancellationToken cancellation = default)
-            => ListInvoices(new ListInvoicesParams(), cancellation);
-
-        public Task<LightningInvoice[]> ListInvoices(ListInvoicesParams _, CancellationToken cancellation = default)
             => Task.FromResult(Array.Empty<LightningInvoice>());
 
         public Task<LightningPayment[]> ListPayments(CancellationToken cancellation = default)
-            => ListPayments(new ListPaymentsParams(), cancellation);
-
-        public Task<LightningPayment[]> ListPayments(ListPaymentsParams _, CancellationToken cancellation = default)
             => Task.FromResult(Array.Empty<LightningPayment>());
 
-        public async Task<LightningNodeInformation> GetInfo(CancellationToken cancellation = default)
-        {
-            try
-            {
-                var resp = await _httpClient.GetAsync("/api/v1/wallet", cancellation);
-                resp.EnsureSuccessStatusCode();
-                
-                return new LightningNodeInformation
-                {
-                    BlockHeight = int.MaxValue,
-                };
-            }
-            catch
-            {
-                return new LightningNodeInformation
-                {
-                    BlockHeight = 0,
-                };
-            }
-        }
+        public Task<LightningInvoice[]> ListInvoices(ListInvoicesParams _, CancellationToken cancellation = default)
+            => ListInvoices(cancellation);
 
-        public Task CancelInvoice(string invoiceId, CancellationToken cancellation = default)
-            => Task.CompletedTask;
+        public Task<LightningPayment[]> ListPayments(ListPaymentsParams _, CancellationToken cancellation = default)
+            => ListPayments(cancellation);
 
-        public Task<LightningChannel[]> ListChannels(CancellationToken cancellation = default)
-            => Task.FromResult(Array.Empty<LightningChannel>());
-
-        public Task<LightningChannel[]> ListAllChannels(CancellationToken cancellation = default)
-            => Task.FromResult(Array.Empty<LightningChannel>());
-
-        public async Task<LightningNodeBalance> GetBalance(CancellationToken cancellation = default)
-        {
-            try
-            {
-                var resp = await _httpClient.GetAsync("/api/v1/wallet", cancellation);
-                resp.EnsureSuccessStatusCode();
-                var wallet = await resp.Content.ReadFromJsonAsync<LNbitsWalletInfo>(cancellationToken: cancellation);
-
-                var onchain = new OnchainBalance
-                {
-                    Confirmed = Money.Zero,
-                    Unconfirmed = Money.Zero
-                };
-
-                var offchain = new OffchainBalance
-                {
-                    Opening = LightMoney.Zero,
-                    Local = LightMoney.Satoshis(wallet.balance),
-                    Remote = LightMoney.Zero,
-                    Closing = LightMoney.Zero
-                };
-
-                return new LightningNodeBalance(onchain, offchain);
-            }
-            catch
-            {
-                var onchain = new OnchainBalance
-                {
-                    Confirmed = Money.Zero,
-                    Unconfirmed = Money.Zero
-                };
-
-                var offchain = new OffchainBalance
-                {
-                    Opening = LightMoney.Zero,
-                    Local = LightMoney.Zero,
-                    Remote = LightMoney.Zero,
-                    Closing = LightMoney.Zero
-                };
-
-                return new LightningNodeBalance(onchain, offchain);
-            }
-        }
-
-        public Task<BitcoinAddress> GetDepositAddress(CancellationToken cancellation = default)
-            => throw new NotSupportedException("LNbits does not support on-chain deposit addresses.");
-
-        public Task<ConnectionResult> ConnectTo(NodeInfo nodeInfo, CancellationToken cancellation = default)
-            => Task.FromResult(ConnectionResult.CouldNotConnect);
-
-        public Task<OpenChannelResponse> OpenChannel(OpenChannelRequest request, CancellationToken cancellation = default)
-            => throw new NotSupportedException("Channel management not supported.");
-
-        public Task<ILightningInvoiceListener> Listen(CancellationToken cancellation = default)
-            => Task.FromResult<ILightningInvoiceListener>(null);
-
+        public Task CancelInvoice(string invoiceId, CancellationToken cancellation = default) => Task.CompletedTask;
+        public Task<LightningChannel[]> ListChannels(CancellationToken cancellation = default) => Task.FromResult(Array.Empty<LightningChannel>());
+        public Task<LightningChannel[]> ListAllChannels(CancellationToken cancellation = default) => Task.FromResult(Array.Empty<LightningChannel>());
+        public Task<BitcoinAddress> GetDepositAddress(CancellationToken cancellation = default) => throw new NotSupportedException();
+        public Task<ConnectionResult> ConnectTo(NodeInfo nodeInfo, CancellationToken cancellation = default) => Task.FromResult(ConnectionResult.CouldNotConnect);
+        public Task<OpenChannelResponse> OpenChannel(OpenChannelRequest request, CancellationToken cancellation = default) => throw new NotSupportedException();
+        public Task<ILightningInvoiceListener> Listen(CancellationToken cancellation = default) => Task.FromResult<ILightningInvoiceListener>(null);
         public void Dispose() => _httpClient?.Dispose();
 
-        // Webhook registration method
+        public Task<LightningNodeInformation> GetInfo(CancellationToken cancellation = default)
+            => Task.FromResult(new LightningNodeInformation { BlockHeight = int.MaxValue });
+
+        public Task<LightningNodeBalance> GetBalance(CancellationToken cancellation = default)
+            => Task.FromResult(new LightningNodeBalance(new OnchainBalance(), new OffchainBalance()));
+
         private async Task RegisterWebhookAsync(string paymentHash, CancellationToken cancellation = default)
         {
-            if (string.IsNullOrEmpty(_btcpayServerUrl))
-            {
-                // No BTCPay URL configured, skip webhook registration
-                return;
-            }
+            if (string.IsNullOrEmpty(_btcpayServerUrl)) return;
+
+            var webhookUrl = $"{_btcpayServerUrl.TrimEnd('/')}/plugins/lnbits/webhook/{paymentHash}";
+            var payload = new { webhook = webhookUrl };
 
             try
             {
-                var webhookUrl = $"{_btcpayServerUrl.TrimEnd('/')}/plugins/lnbits/webhook/{paymentHash}";
-                
-                var payload = new { webhook = webhookUrl };
-                
-                var response = await System.Net.Http.Json.HttpClientJsonExtensions.PutAsJsonAsync(_httpClient, $"/api/v1/payments/{paymentHash}", payload, cancellation);
-                
-                // LNbits returns 201 or 200 on success
-                if (response.IsSuccessStatusCode)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Webhook registered: {webhookUrl}");
-                }
+                var resp = await System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync(
+                    _httpClient, $"/api/v1/payments/{paymentHash}/webhook", payload, cancellation);
             }
-            catch (Exception ex)
-            {
-                // Don't fail invoice creation if webhook registration fails
-                System.Diagnostics.Debug.WriteLine($"Failed to register webhook: {ex.Message}");
-            }
+            catch { }
         }
     }
 
@@ -249,11 +158,5 @@ namespace BTCPayServer.Lightning.LNbits
         public long amount { get; set; }
         public string bolt11 { get; set; }
         public long time { get; set; }
-        public string memo { get; set; }
-    }
-
-    internal class LNbitsWalletInfo
-    {
-        public long balance { get; set; }
     }
 }
