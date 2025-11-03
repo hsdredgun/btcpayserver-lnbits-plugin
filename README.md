@@ -17,7 +17,7 @@ Successfully tested on BTCPay Server v2.0 with invoice creation and Lightning pa
 ##  Installation
 
 1. Download the latest `.btcpay` file from releases
-2. Go to BTCPay Server → Server Settings → Plugins
+2. Go to BTCPay Server → Manage Plugins
 3. Click "Upload Plugin"
 4. Upload the `.btcpay` file
 5. Restart BTCPay Server
